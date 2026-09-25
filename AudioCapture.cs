@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Threading;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
@@ -26,6 +26,7 @@ sealed class AudioCapture : IDisposable
     WasapiLoopbackCapture? _capture;
     string? _deviceId;
     long _lastDataTick;
+    long _lastSoundTick;
     Timer? _watchdog;
     double _agcRef = -30;
     volatile int _sampleRate = 48000;
@@ -36,6 +37,9 @@ sealed class AudioCapture : IDisposable
         for (int i = 0; i < FftSize; i++)
             _window[i] = (float)(0.5 * (1 - Math.Cos(2 * Math.PI * i / (FftSize - 1))));
     }
+
+    /// <summary>最近半秒内系统输出里有非静音的声音。</summary>
+    public bool IsSounding => Environment.TickCount64 - Interlocked.Read(ref _lastSoundTick) < 500;
 
     public void Start()
     {
@@ -108,6 +112,7 @@ sealed class AudioCapture : IDisposable
         int frameBytes = bytes * ch;
         int frames = e.BytesRecorded / frameBytes;
         var buf = e.Buffer;
+        float peak = 0;
 
         lock (_ringLock)
         {
@@ -126,11 +131,14 @@ sealed class AudioCapture : IDisposable
                         _ => 0f,
                     };
                 }
-                _ring[_write] = sum / ch;
+                float v = sum / ch;
+                if (v > peak) peak = v; else if (-v > peak) peak = -v;
+                _ring[_write] = v;
                 if (++_write == _ring.Length) _write = 0;
             }
         }
         Interlocked.Exchange(ref _lastDataTick, Environment.TickCount64);
+        if (peak > 1e-4f) Interlocked.Exchange(ref _lastSoundTick, Environment.TickCount64);
     }
 
     /// <summary>濉厖 bands锛?..1锛夈€傛病鏈夊０闊虫椂杩斿洖 false 骞舵竻闆躲€?/summary>

@@ -24,6 +24,9 @@ sealed class TrayIcon : IDisposable
         };
     }
 
+    public void ShowTip(string title, string text) =>
+        _icon.ShowBalloonTip(4000, title, text, WinForms.ToolTipIcon.None);
+
     public static Bitmap DrawLogo(int size)
     {
         var bmp = new Bitmap(size, size);

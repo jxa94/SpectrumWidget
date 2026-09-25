@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Text.Json;
 
@@ -21,6 +21,10 @@ public sealed class Settings
     public double BackgroundOpacity { get; set; } = 0.95;
     public VisualStyle Style { get; set; } = VisualStyle.Bars;
     public int BarCount { get; set; } = 48;
+    public bool AutoHideIdle { get; set; }
+    public int AutoHideDelay { get; set; } = 10;
+    public bool AutoHideFullscreen { get; set; }
+    public bool HideTipShown { get; set; }
 
     public static Settings Load()
     {

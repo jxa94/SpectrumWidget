@@ -5,7 +5,7 @@
         Title="频谱音乐小部件"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         ResizeMode="NoResize" ShowInTaskbar="False" SizeToContent="WidthAndHeight"
-        WindowStartupLocation="Manual" Left="-10000" Top="-10000"
+        WindowStartupLocation="Manual" ShowActivated="False" Left="-10000" Top="-10000"
         FontFamily="{StaticResource UiFont}" Foreground="White"
         UseLayoutRounding="True">
     <Grid x:Name="Root" Margin="22">
@@ -94,7 +94,7 @@
                         </Grid.RowDefinitions>
 
                         <TextBlock x:Name="TitleText" FontSize="19" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
-                                   Text="没有正在播放的媒体" Margin="0,0,0,0"/>
+                                   Text="没有正在播放的媒体" Margin="0,0,22,0"/>
                         <TextBlock x:Name="ArtistText" Grid.Row="1" FontSize="13.5" Opacity="0.82" TextTrimming="CharacterEllipsis"
                                    Margin="0,3,0,0" Text="在任意播放器里放点音乐吧"/>
                         <TextBlock x:Name="SubText" Grid.Row="2" FontSize="11.5" Opacity="0.5" TextTrimming="CharacterEllipsis"
@@ -127,6 +127,12 @@
 
                 <local:SpectrumView x:Name="Spectrum" Grid.Row="1" Height="82" Margin="0,14,0,0"/>
             </Grid>
+
+            <!-- 悬停时出现的隐藏按钮 -->
+            <Button x:Name="HideBtn" Style="{StaticResource IconButton}" Width="26" Height="26" FontSize="10"
+                    Content="&#xE921;" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,10,10,0"
+                    Opacity="0" Background="#22000000" Click="Hide_Click"
+                    ToolTip="隐藏（Ctrl+Alt+M 或单击托盘图标恢复）"/>
         </Grid>
     </Grid>
 </Window>

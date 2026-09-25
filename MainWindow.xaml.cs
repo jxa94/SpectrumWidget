@@ -37,6 +37,16 @@ public partial class MainWindow : Window
     readonly List<(MenuItem item, Func<bool> isChecked)> _checks = new();
     readonly DispatcherTimer _pollTimer = new() { Interval = TimeSpan.FromSeconds(1.5) };
     readonly DispatcherTimer _saveTimer = new() { Interval = TimeSpan.FromMilliseconds(600) };
+    readonly DispatcherTimer _visTimer = new() { Interval = TimeSpan.FromMilliseconds(400) };
+
+    // 显示 / 隐藏状态
+    bool _shown = true;          // 当前目标状态（动画结束后的样子）
+    bool _manualHidden;          // 用户手动隐藏
+    bool _autoSuppressed;        // 自动隐藏条件成立时用户又手动显示了：直到条件变化前不再自动隐藏
+    bool _lastAutoHide;
+    bool _wasIdle;
+    DateTime _lastActive = DateTime.Now;
+    const int HotkeyId = 0x5357;
 
     // 播放状态
     string? _coverHash;
@@ -72,7 +82,14 @@ public partial class MainWindow : Window
             if (Left > -5000) { _settings.Left = Left; _settings.Top = Top; _settings.Save(); }
         };
 
-        SourceInitialized += (_, _) => ApplyExStyle();
+        SourceInitialized += (_, _) =>
+        {
+            ApplyExStyle();
+            RegisterToggleHotkey();
+        };
+        Card.MouseEnter += (_, _) => FadeHideButton(1);
+        Card.MouseLeave += (_, _) => FadeHideButton(0);
+        _visTimer.Tick += (_, _) => EvaluateVisibility();
         Loaded += OnLoaded;
         Closed += (_, _) => Cleanup();
 
@@ -101,6 +118,7 @@ public partial class MainWindow : Window
         }
         _pollTimer.Tick += (_, _) => { _media.Pick(); RefreshTimeline(); };
         _pollTimer.Start();
+        _visTimer.Start();
     }
 
     void PlaceWindow()
@@ -134,10 +152,100 @@ public partial class MainWindow : Window
         try { DragMove(); } catch { }
     }
 
+    // ───────────── 显示 / 隐藏 ─────────────
+
     void ToggleVisible()
     {
-        if (IsVisible) Hide();
-        else { Show(); Activate(); }
+        if (_shown) _manualHidden = true;
+        else
+        {
+            _manualHidden = false;
+            if (_lastAutoHide) _autoSuppressed = true;
+        }
+        EvaluateVisibility();
+    }
+
+    void Hide_Click(object sender, RoutedEventArgs e)
+    {
+        _manualHidden = true;
+        EvaluateVisibility();
+        if (!_settings.HideTipShown)
+        {
+            _settings.HideTipShown = true;
+            _settings.Save();
+            _tray?.ShowTip("小部件已隐藏", "按 Ctrl+Alt+M 或单击托盘图标即可恢复");
+        }
+    }
+
+    void EvaluateVisibility()
+    {
+        var now = DateTime.Now;
+        if (_playing || _audio.IsSounding) _lastActive = now;
+        bool idle = (now - _lastActive).TotalSeconds >= Math.Max(1, _settings.AutoHideDelay);
+        bool idleHide = _settings.AutoHideIdle && idle;
+        // 开了“没在播放时隐藏”：空闲之后又开始播放，连手动隐藏也一并撤销
+        if (_settings.AutoHideIdle && _wasIdle && !idle) _manualHidden = false;
+        _wasIdle = idle;
+
+        bool fsHide = _settings.AutoHideFullscreen && IsFullscreenAppOnMyMonitor();
+        bool autoHide = idleHide || fsHide;
+        if (autoHide != _lastAutoHide) { _autoSuppressed = false; _lastAutoHide = autoHide; }
+
+        SetShown(!_manualHidden && !(autoHide && !_autoSuppressed));
+    }
+
+    void SetShown(bool show)
+    {
+        if (show == _shown) return;
+        _shown = show;
+        var dur = new Duration(TimeSpan.FromMilliseconds(show ? 260 : 200));
+        if (show)
+        {
+            Opacity = 0;
+            Show();
+            BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, dur) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+        }
+        else
+        {
+            var anim = new DoubleAnimation(0, dur);
+            anim.Completed += (_, _) => { if (!_shown) Hide(); };
+            BeginAnimation(OpacityProperty, anim);
+        }
+    }
+
+    void FadeHideButton(double to) =>
+        HideBtn.BeginAnimation(OpacityProperty, new DoubleAnimation(to, new Duration(TimeSpan.FromMilliseconds(150))));
+
+    bool IsFullscreenAppOnMyMonitor()
+    {
+        var me = new WindowInteropHelper(this).Handle;
+        var fg = GetForegroundWindow();
+        if (fg == IntPtr.Zero || fg == me) return false;
+
+        var cls = new System.Text.StringBuilder(64);
+        GetClassName(fg, cls, cls.Capacity);
+        string c = cls.ToString();
+        if (c is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd") return false;
+
+        var mon = MonitorFromWindow(fg, 2);
+        if (me != IntPtr.Zero && MonitorFromWindow(me, 2) != mon) return false;
+        var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+        if (!GetMonitorInfo(mon, ref mi) || !GetWindowRect(fg, out RECT r)) return false;
+        return r.Left <= mi.rcMonitor.Left && r.Top <= mi.rcMonitor.Top
+               && r.Right >= mi.rcMonitor.Right && r.Bottom >= mi.rcMonitor.Bottom;
+    }
+
+    void RegisterToggleHotkey()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        HwndSource.FromHwnd(hwnd)?.AddHook((IntPtr h, int msg, IntPtr w, IntPtr l, ref bool handled) =>
+        {
+            if (msg == 0x0312 && w.ToInt32() == HotkeyId) { ToggleVisible(); handled = true; }
+            return IntPtr.Zero;
+        });
+        // Ctrl + Alt + M，MOD_NOREPEAT 防止按住时连发
+        if (!RegisterHotKey(hwnd, HotkeyId, 0x0001 | 0x0002 | 0x4000, 0x4D))
+            App.Log(new InvalidOperationException("Ctrl+Alt+M 已被其他程序占用"));
     }
 
     // ───────────── 每帧 ─────────────
@@ -395,7 +503,7 @@ public partial class MainWindow : Window
             return mi;
         }
 
-        _menu.Items.Add(Item("显示 / 隐藏", ToggleVisible));
+        _menu.Items.Add(Item("显示 / 隐藏　Ctrl+Alt+M", ToggleVisible));
         _menu.Items.Add(new Separator());
         _menu.Items.Add(Item("始终置顶", () => { _settings.Topmost = !_settings.Topmost; Topmost = _settings.Topmost; _settings.Save(); },
             () => _settings.Topmost));
@@ -403,6 +511,17 @@ public partial class MainWindow : Window
             () => _settings.Locked));
         _menu.Items.Add(Item("鼠标穿透（从托盘取消）", () => { _settings.ClickThrough = !_settings.ClickThrough; ApplyExStyle(); _settings.Save(); },
             () => _settings.ClickThrough));
+
+        var auto = new MenuItem { Header = "自动隐藏" };
+        auto.Items.Add(Item("没在播放时隐藏（播放时出现）", () => { _settings.AutoHideIdle = !_settings.AutoHideIdle; _settings.Save(); EvaluateVisibility(); },
+            () => _settings.AutoHideIdle));
+        auto.Items.Add(Item("有全屏程序时隐藏", () => { _settings.AutoHideFullscreen = !_settings.AutoHideFullscreen; _settings.Save(); EvaluateVisibility(); },
+            () => _settings.AutoHideFullscreen));
+        auto.Items.Add(new Separator());
+        foreach (var (label, sec) in new[] { ("停止 3 秒后", 3), ("停止 10 秒后", 10), ("停止 30 秒后", 30), ("停止 1 分钟后", 60) })
+            auto.Items.Add(Item(label, () => { _settings.AutoHideDelay = sec; _settings.Save(); },
+                () => _settings.AutoHideDelay == sec));
+        _menu.Items.Add(auto);
         _menu.Items.Add(new Separator());
 
         var style = new MenuItem { Header = "频谱样式" };
@@ -434,7 +553,8 @@ public partial class MainWindow : Window
         {
             var wa = SystemParameters.WorkArea;
             Left = wa.Right - ActualWidth; Top = wa.Bottom - ActualHeight;
-            Show();
+            _manualHidden = false; _autoSuppressed = _lastAutoHide;
+            EvaluateVisibility();
         }));
         _menu.Items.Add(new Separator());
         _menu.Items.Add(Item("退出", () => Close()));
@@ -496,6 +616,16 @@ public partial class MainWindow : Window
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] static extern IntPtr GetWindowLongPtr(IntPtr h, int i);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] static extern IntPtr SetWindowLongPtr(IntPtr h, int i, IntPtr v);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr h, uint flags);
+    [DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr m, ref MONITORINFO mi);
+    [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
+    [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);
+
+    [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] struct MONITORINFO { public int cbSize; public RECT rcMonitor, rcWork; public uint dwFlags; }
 
     void ApplyExStyle()
     {
@@ -512,6 +642,8 @@ public partial class MainWindow : Window
     {
         CompositionTarget.Rendering -= OnFrame;
         _pollTimer.Stop();
+        _visTimer.Stop();
+        UnregisterHotKey(new WindowInteropHelper(this).Handle, HotkeyId);
         if (Left > -5000) { _settings.Left = Left; _settings.Top = Top; }
         _settings.Save();
         _audio.Dispose();
