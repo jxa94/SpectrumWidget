@@ -40,10 +40,19 @@ public partial class MainWindow : Window
     readonly DispatcherTimer _visTimer = new() { Interval = TimeSpan.FromMilliseconds(400) };
 
     // 显示 / 隐藏状态
+    // 完全隐藏（只用于全屏 / 游戏，以及托盘单击）
     bool _shown = true;          // 当前目标状态（动画结束后的样子）
-    bool _manualHidden;          // 用户手动隐藏
-    bool _autoSuppressed;        // 自动隐藏条件成立时用户又手动显示了：直到条件变化前不再自动隐藏
+    bool _manualHidden;          // 托盘单击隐藏
+    bool _autoSuppressed;        // 全屏时用户又手动叫出来：直到全屏状态变化前不再自动隐藏
     bool _lastAutoHide;
+    // 收起成小圆片（隐藏按钮 / Ctrl+Alt+M / 空闲自动收起）
+    bool _collapsed;             // 目标状态
+    bool _visualCollapsed;       // 当前界面实际状态
+    bool _collapsedManual;
+    bool _idleSuppressed;
+    bool _lastIdleHide;
+    int _swapVersion;
+    readonly float[] _miniBands = new float[6];
     bool _wasIdle;
     DateTime _lastActive = DateTime.Now;
     const int HotkeyId = 0x5357;
@@ -79,7 +88,9 @@ public partial class MainWindow : Window
         _saveTimer.Tick += (_, _) =>
         {
             _saveTimer.Stop();
-            if (Left > -5000) { _settings.Left = Left; _settings.Top = Top; _settings.Save(); }
+            if (Left < -5000 || _swapping) return;
+            var p = _visualCollapsed ? ExpandedPositionFromMini() : new Point(Left, Top);
+            _settings.Left = p.X; _settings.Top = p.Y; _settings.Save();
         };
 
         SourceInitialized += (_, _) =>
@@ -90,6 +101,9 @@ public partial class MainWindow : Window
         Card.MouseEnter += (_, _) => FadeHideButton(1);
         Card.MouseLeave += (_, _) => FadeHideButton(0);
         _visTimer.Tick += (_, _) => EvaluateVisibility();
+        MiniSpectrum.Mode = VisualStyle.Mirror;
+        MiniSpectrum.Compact = true;
+        _collapsedManual = settings.Collapsed;
         Loaded += OnLoaded;
         Closed += (_, _) => Cleanup();
 
@@ -102,6 +116,8 @@ public partial class MainWindow : Window
     async void OnLoaded(object sender, RoutedEventArgs e)
     {
         PlaceWindow();
+        _expandedSize = new Size(ActualWidth, ActualHeight);
+        if (_collapsedManual) SetCollapsed(true);
 
         _audio.Start();
         CompositionTarget.Rendering += OnFrame;
@@ -148,12 +164,16 @@ public partial class MainWindow : Window
             CycleStyle();
             return;
         }
-        if (_settings.Locked) return;
-        try { DragMove(); } catch { }
+        double x0 = Left, y0 = Top;
+        if (!_settings.Locked)
+            try { DragMove(); } catch { }
+        if (_visualCollapsed && Math.Abs(Left - x0) < 3 && Math.Abs(Top - y0) < 3)
+            ExpandByUser();
     }
 
     // ───────────── 显示 / 隐藏 ─────────────
 
+    /// <summary>托盘单击：完全隐藏 / 显示。</summary>
     void ToggleVisible()
     {
         if (_shown) _manualHidden = true;
@@ -165,15 +185,44 @@ public partial class MainWindow : Window
         EvaluateVisibility();
     }
 
+    /// <summary>Ctrl+Alt+M：收起 / 展开；如果当前完全隐藏着，就直接叫出来并展开。</summary>
+    void ToggleCollapse()
+    {
+        if (!_shown)
+        {
+            _manualHidden = false;
+            if (_lastAutoHide) _autoSuppressed = true;
+            ExpandByUser();
+            return;
+        }
+        if (_collapsed) ExpandByUser(); else CollapseByUser();
+    }
+
+    void CollapseByUser()
+    {
+        _collapsedManual = true;
+        _settings.Collapsed = true;
+        _settings.Save();
+        EvaluateVisibility();
+    }
+
+    void ExpandByUser()
+    {
+        _collapsedManual = false;
+        if (_lastIdleHide) _idleSuppressed = true;
+        _settings.Collapsed = false;
+        _settings.Save();
+        EvaluateVisibility();
+    }
+
     void Hide_Click(object sender, RoutedEventArgs e)
     {
-        _manualHidden = true;
-        EvaluateVisibility();
+        CollapseByUser();
         if (!_settings.HideTipShown)
         {
             _settings.HideTipShown = true;
             _settings.Save();
-            _tray?.ShowTip("小部件已隐藏", "按 Ctrl+Alt+M 或单击托盘图标即可恢复");
+            _tray?.ShowTip("小部件已收起", "单击小圆片或按 Ctrl+Alt+M 展开");
         }
     }
 
@@ -182,16 +231,22 @@ public partial class MainWindow : Window
         var now = DateTime.Now;
         if (_playing || _audio.IsSounding) _lastActive = now;
         bool idle = (now - _lastActive).TotalSeconds >= Math.Max(1, _settings.AutoHideDelay);
-        bool idleHide = _settings.AutoHideIdle && idle;
-        // 开了“没在播放时隐藏”：空闲之后又开始播放，连手动隐藏也一并撤销
-        if (_settings.AutoHideIdle && _wasIdle && !idle) _manualHidden = false;
+        // 开了“没在播放时收起”：空闲之后又开始播放，连手动收起也一并展开
+        if (_settings.AutoHideIdle && _wasIdle && !idle && _collapsedManual)
+        {
+            _collapsedManual = false;
+            _settings.Collapsed = false;
+            _settings.Save();
+        }
         _wasIdle = idle;
 
-        bool fsHide = _settings.AutoHideFullscreen && IsFullscreenAppOnMyMonitor();
-        bool autoHide = idleHide || fsHide;
-        if (autoHide != _lastAutoHide) { _autoSuppressed = false; _lastAutoHide = autoHide; }
+        bool idleHide = _settings.AutoHideIdle && idle;
+        if (idleHide != _lastIdleHide) { _idleSuppressed = false; _lastIdleHide = idleHide; }
+        SetCollapsed(_collapsedManual || (idleHide && !_idleSuppressed));
 
-        SetShown(!_manualHidden && !(autoHide && !_autoSuppressed));
+        bool fsHide = _settings.AutoHideFullscreen && IsFullscreenAppOnMyMonitor();
+        if (fsHide != _lastAutoHide) { _autoSuppressed = false; _lastAutoHide = fsHide; }
+        SetShown(!_manualHidden && !(fsHide && !_autoSuppressed));
     }
 
     void SetShown(bool show)
@@ -211,6 +266,90 @@ public partial class MainWindow : Window
             anim.Completed += (_, _) => { if (!_shown) Hide(); };
             BeginAnimation(OpacityProperty, anim);
         }
+    }
+
+    // ───────────── 收起 / 展开 ─────────────
+
+    Size _expandedSize;
+    bool _swapping;
+
+    void SetCollapsed(bool collapsed)
+    {
+        if (collapsed == _collapsed) return;
+        _collapsed = collapsed;
+        int ver = ++_swapVersion;
+
+        if (!IsVisible)
+        {
+            ApplyCollapsedLayout();
+            return;
+        }
+        var fadeOut = new DoubleAnimation(0, new Duration(TimeSpan.FromMilliseconds(130)));
+        fadeOut.Completed += (_, _) =>
+        {
+            if (ver != _swapVersion) return;
+            ApplyCollapsedLayout();
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+            Root.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, new Duration(TimeSpan.FromMilliseconds(220))) { EasingFunction = ease });
+            var pop = new DoubleAnimation(0.9, 1, new Duration(TimeSpan.FromMilliseconds(260))) { EasingFunction = new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.4 } };
+            PopScale.BeginAnimation(ScaleTransform.ScaleXProperty, pop);
+            PopScale.BeginAnimation(ScaleTransform.ScaleYProperty, pop);
+        };
+        Root.BeginAnimation(OpacityProperty, fadeOut);
+    }
+
+    /// <summary>切换布局，并让靠近屏幕角落的那个角保持不动。</summary>
+    void ApplyCollapsedLayout()
+    {
+        if (_collapsed == _visualCollapsed) return;
+        var (right, bottom) = NearestCorner();
+        double ax = right ? Left + ActualWidth : Left;
+        double ay = bottom ? Top + ActualHeight : Top;
+        if (_collapsed) _expandedSize = new Size(ActualWidth, ActualHeight);
+
+        _swapping = true;
+        _visualCollapsed = _collapsed;
+        Card.Visibility = _collapsed ? Visibility.Collapsed : Visibility.Visible;
+        Mini.Visibility = _collapsed ? Visibility.Visible : Visibility.Collapsed;
+        UpdateLayout();
+        Left = right ? ax - ActualWidth : ax;
+        Top = bottom ? ay - ActualHeight : ay;
+        if (!_collapsed) ClampToWorkArea();
+        PopScale.CenterX = right ? Root.ActualWidth : 0;
+        PopScale.CenterY = bottom ? Root.ActualHeight : 0;
+        _swapping = false;
+    }
+
+    Point ExpandedPositionFromMini()
+    {
+        var (right, bottom) = NearestCorner();
+        double x = right ? Left + ActualWidth - _expandedSize.Width : Left;
+        double y = bottom ? Top + ActualHeight - _expandedSize.Height : Top;
+        return new Point(x, y);
+    }
+
+    Rect WorkAreaDip()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        var wa = System.Windows.Forms.Screen.FromHandle(hwnd).WorkingArea;
+        var dpi = VisualTreeHelper.GetDpi(this);
+        return new Rect(wa.Left / dpi.DpiScaleX, wa.Top / dpi.DpiScaleY, wa.Width / dpi.DpiScaleX, wa.Height / dpi.DpiScaleY);
+    }
+
+    (bool right, bool bottom) NearestCorner()
+    {
+        var wa = WorkAreaDip();
+        double cx = Left + ActualWidth / 2, cy = Top + ActualHeight / 2;
+        return (cx > wa.Left + wa.Width / 2, cy > wa.Top + wa.Height / 2);
+    }
+
+    void ClampToWorkArea()
+    {
+        var wa = WorkAreaDip();
+        if (Left + ActualWidth > wa.Right) Left = wa.Right - ActualWidth;
+        if (Top + ActualHeight > wa.Bottom) Top = wa.Bottom - ActualHeight;
+        if (Left < wa.Left) Left = wa.Left;
+        if (Top < wa.Top) Top = wa.Top;
     }
 
     void FadeHideButton(double to) =>
@@ -240,7 +379,7 @@ public partial class MainWindow : Window
         var hwnd = new WindowInteropHelper(this).Handle;
         HwndSource.FromHwnd(hwnd)?.AddHook((IntPtr h, int msg, IntPtr w, IntPtr l, ref bool handled) =>
         {
-            if (msg == 0x0312 && w.ToInt32() == HotkeyId) { ToggleVisible(); handled = true; }
+            if (msg == 0x0312 && w.ToInt32() == HotkeyId) { ToggleCollapse(); handled = true; }
             return IntPtr.Zero;
         });
         // Ctrl + Alt + M，MOD_NOREPEAT 防止按住时连发
@@ -260,8 +399,23 @@ public partial class MainWindow : Window
         if (!IsVisible) return;
 
         _audio.GetBands(_bands, dt);
-        Spectrum.Update(_bands, dt);
-        UpdateProgress();
+        if (_visualCollapsed)
+        {
+            int n = _bands.Length, m = _miniBands.Length;
+            for (int i = 0; i < m; i++)
+            {
+                float mx = 0;
+                for (int k = i * n / m; k < (i + 1) * n / m; k++) mx = Math.Max(mx, _bands[k]);
+                _miniBands[i] = mx;
+            }
+            MiniSpectrum.Update(_miniBands, dt);
+            if (_playing) MiniRotate.Angle = (MiniRotate.Angle + dt * 30) % 360;
+        }
+        else
+        {
+            Spectrum.Update(_bands, dt);
+            UpdateProgress();
+        }
     }
 
     void UpdateProgress()
@@ -389,12 +543,17 @@ public partial class MainWindow : Window
         if (bmp == null)
         {
             CoverBorder.BeginAnimation(OpacityProperty, new DoubleAnimation(0, fade));
+            MiniCover.BeginAnimation(OpacityProperty, new DoubleAnimation(0, fade));
+            MiniHole.BeginAnimation(OpacityProperty, new DoubleAnimation(0, fade));
             BgCover.BeginAnimation(OpacityProperty, new DoubleAnimation(0, fade));
             ApplyAccent(ColorUtil.DefaultA, ColorUtil.DefaultB);
             return;
         }
 
         CoverBrush.ImageSource = bmp;
+        MiniCoverBrush.ImageSource = bmp;
+        MiniCover.BeginAnimation(OpacityProperty, new DoubleAnimation(1, fade));
+        MiniHole.BeginAnimation(OpacityProperty, new DoubleAnimation(1, fade));
         BgBrush.ImageSource = bmp;
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
         CoverBorder.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, fade) { EasingFunction = ease });
@@ -411,6 +570,7 @@ public partial class MainWindow : Window
     void ApplyAccent(Color a, Color b)
     {
         Spectrum.SetAccent(a, b);
+        MiniSpectrum.SetAccent(a, b);
         var brush = new SolidColorBrush(a);
         brush.Freeze();
         Application.Current.Resources["AccentBrush"] = brush;
@@ -503,7 +663,8 @@ public partial class MainWindow : Window
             return mi;
         }
 
-        _menu.Items.Add(Item("显示 / 隐藏　Ctrl+Alt+M", ToggleVisible));
+        _menu.Items.Add(Item("收起 / 展开　Ctrl+Alt+M", ToggleCollapse));
+        _menu.Items.Add(Item("完全隐藏 / 显示（单击托盘）", ToggleVisible));
         _menu.Items.Add(new Separator());
         _menu.Items.Add(Item("始终置顶", () => { _settings.Topmost = !_settings.Topmost; Topmost = _settings.Topmost; _settings.Save(); },
             () => _settings.Topmost));
@@ -512,10 +673,10 @@ public partial class MainWindow : Window
         _menu.Items.Add(Item("鼠标穿透（从托盘取消）", () => { _settings.ClickThrough = !_settings.ClickThrough; ApplyExStyle(); _settings.Save(); },
             () => _settings.ClickThrough));
 
-        var auto = new MenuItem { Header = "自动隐藏" };
-        auto.Items.Add(Item("没在播放时隐藏（播放时出现）", () => { _settings.AutoHideIdle = !_settings.AutoHideIdle; _settings.Save(); EvaluateVisibility(); },
+        var auto = new MenuItem { Header = "自动收起 / 隐藏" };
+        auto.Items.Add(Item("没在播放时收起（播放时展开）", () => { _settings.AutoHideIdle = !_settings.AutoHideIdle; _settings.Save(); EvaluateVisibility(); },
             () => _settings.AutoHideIdle));
-        auto.Items.Add(Item("有全屏程序时隐藏", () => { _settings.AutoHideFullscreen = !_settings.AutoHideFullscreen; _settings.Save(); EvaluateVisibility(); },
+        auto.Items.Add(Item("有全屏程序 / 游戏时完全隐藏", () => { _settings.AutoHideFullscreen = !_settings.AutoHideFullscreen; _settings.Save(); EvaluateVisibility(); },
             () => _settings.AutoHideFullscreen));
         auto.Items.Add(new Separator());
         foreach (var (label, sec) in new[] { ("停止 3 秒后", 3), ("停止 10 秒后", 10), ("停止 30 秒后", 30), ("停止 1 分钟后", 60) })
@@ -592,6 +753,7 @@ public partial class MainWindow : Window
     void ApplyOpacity()
     {
         BackPlate.Opacity = _settings.BackgroundOpacity;
+        MiniPlate.Opacity = Math.Max(0.85, _settings.BackgroundOpacity); // 小圆片面积小，太透会看不清
         BgLayer.Opacity = _settings.BackgroundOpacity;
     }
 

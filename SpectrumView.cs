@@ -25,6 +25,9 @@ sealed class SpectrumView : FrameworkElement
 
     public VisualStyle Mode { get; set; } = VisualStyle.Bars;
 
+    /// <summary>迷你模式：镜像柱，按顺序排列（不把低频挪到中间）。</summary>
+    public bool Compact { get; set; }
+
     public SpectrumView()
     {
         _ta = _a; _tb = _b;
@@ -200,7 +203,7 @@ sealed class SpectrumView : FrameworkElement
         for (int i = 0; i < n; i++)
         {
             // 低频放在中间，向两侧展开
-            int src = Math.Abs(i - n / 2) * 2;
+            int src = Compact ? i : Math.Abs(i - n / 2) * 2;
             if (src >= n) src = n - 1;
             float lv = _level[src];
             double x = i * slot + (slot - bw) / 2;

@@ -12,6 +12,9 @@
         <Grid.LayoutTransform>
             <ScaleTransform x:Name="RootScale" ScaleX="1" ScaleY="1"/>
         </Grid.LayoutTransform>
+        <Grid.RenderTransform>
+            <ScaleTransform x:Name="PopScale" ScaleX="1" ScaleY="1"/>
+        </Grid.RenderTransform>
 
         <Grid x:Name="Card" Width="460">
             <!-- 底板 + 阴影 -->
@@ -132,7 +135,42 @@
             <Button x:Name="HideBtn" Style="{StaticResource IconButton}" Width="26" Height="26" FontSize="10"
                     Content="&#xE921;" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,10,10,0"
                     Opacity="0" Background="#22000000" Click="Hide_Click"
-                    ToolTip="隐藏（Ctrl+Alt+M 或单击托盘图标恢复）"/>
+                    ToolTip="收起（Ctrl+Alt+M）"/>
+        </Grid>
+
+        <!-- 收起后的小圆片：旋转的封面 + 迷你频谱，单击展开 -->
+        <Grid x:Name="Mini" Visibility="Collapsed" Height="48" Cursor="Hand" ToolTip="单击展开（Ctrl+Alt+M）">
+            <Border x:Name="MiniPlate" CornerRadius="24" Background="#FF111318">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="22" ShadowDepth="5" Direction="270" Opacity="0.5" Color="Black" RenderingBias="Performance"/>
+                </Border.Effect>
+            </Border>
+            <Border CornerRadius="24" BorderThickness="1" BorderBrush="#24FFFFFF" IsHitTestVisible="False"/>
+            <StackPanel Orientation="Horizontal" Margin="7,7,16,7">
+                <Grid Width="34" Height="34">
+                    <Ellipse>
+                        <Ellipse.Fill>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#34466E" Offset="0"/>
+                                <GradientStop Color="#4E3A6E" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Ellipse.Fill>
+                    </Ellipse>
+                    <TextBlock Text="&#xE8D6;" FontFamily="{StaticResource IconFont}" FontSize="13" Opacity="0.6"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <Ellipse x:Name="MiniCover" Opacity="0" RenderTransformOrigin="0.5,0.5">
+                        <Ellipse.Fill>
+                            <ImageBrush x:Name="MiniCoverBrush" Stretch="UniformToFill"/>
+                        </Ellipse.Fill>
+                        <Ellipse.RenderTransform>
+                            <RotateTransform x:Name="MiniRotate"/>
+                        </Ellipse.RenderTransform>
+                    </Ellipse>
+                    <Ellipse x:Name="MiniHole" Width="7" Height="7" Fill="#FF111318" Stroke="#40FFFFFF" StrokeThickness="0.8" Opacity="0"/>
+                    <Ellipse Stroke="#30FFFFFF" StrokeThickness="1"/>
+                </Grid>
+                <local:SpectrumView x:Name="MiniSpectrum" Width="36" Height="24" Margin="10,0,0,0" VerticalAlignment="Center"/>
+            </StackPanel>
         </Grid>
     </Grid>
 </Window>

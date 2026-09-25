@@ -25,6 +25,7 @@ public sealed class Settings
     public int AutoHideDelay { get; set; } = 10;
     public bool AutoHideFullscreen { get; set; }
     public bool HideTipShown { get; set; }
+    public bool Collapsed { get; set; }
 
     public static Settings Load()
     {
