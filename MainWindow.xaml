@@ -96,10 +96,18 @@
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
-                        <TextBlock x:Name="TitleText" FontSize="19" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
-                                   Text="没有正在播放的媒体" Margin="0,0,22,0"/>
-                        <TextBlock x:Name="ArtistText" Grid.Row="1" FontSize="13.5" Opacity="0.82" TextTrimming="CharacterEllipsis"
-                                   Margin="0,3,0,0" Text="在任意播放器里放点音乐吧"/>
+                        <local:MarqueeText x:Name="TitleText" TextElement.FontSize="19" TextElement.FontWeight="SemiBold"
+                                           Text="没有正在播放的媒体" Margin="0,0,22,0"/>
+                        <Grid Grid.Row="1" Margin="0,3,0,0" Opacity="0.82">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="ArtistIcon" Text="&#xE77B;" FontFamily="{StaticResource IconFont}" FontSize="11"
+                                       Opacity="0.75" VerticalAlignment="Center" Margin="0,1,6,0" Visibility="Collapsed"/>
+                            <local:MarqueeText x:Name="ArtistText" Grid.Column="1" TextElement.FontSize="13.5"
+                                               Text="在任意播放器里放点音乐吧"/>
+                        </Grid>
                         <TextBlock x:Name="SubText" Grid.Row="2" FontSize="11.5" Opacity="0.5" TextTrimming="CharacterEllipsis"
                                    Margin="0,3,0,0"/>
 

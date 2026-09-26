@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
@@ -468,12 +469,42 @@ public partial class MainWindow : Window
         ArtistText.Text = "在任意播放器里放点音乐吧";
         SubText.Text = "";
         TitleText.ToolTip = null;
+        ArtistText.ToolTip = null;
+        ArtistIcon.Visibility = Visibility.Collapsed;
         _tlEnd = TimeSpan.Zero; _tlPos = TimeSpan.Zero; _playing = false;
         PosText.Text = DurText.Text = "0:00";
         _lastPosSec = _lastDurSec = -1;
         PlayBtn.Content = "";
         PrevBtn.IsEnabled = PlayBtn.IsEnabled = NextBtn.IsEnabled = false;
         SetCover(null, null);
+    }
+
+    static readonly string[] TitleSeparators = { " - ", " – ", " — ", " | " };
+
+    /// <summary>
+    /// 艺术家依次取：艺术家 → 专辑艺术家 → 副标题。都没有时，
+    /// 如果标题是“歌手 - 歌名”这种格式（视频网站常见），就拆开。
+    /// </summary>
+    internal static (string title, string artist) ResolveTitleArtist(string? title, string? artist, string? albumArtist, string? subtitle)
+    {
+        title = title?.Trim() ?? "";
+        string a = new[] { artist, albumArtist, subtitle }
+            .Select(x => x?.Trim() ?? "").FirstOrDefault(x => x.Length > 0) ?? "";
+
+        if (a.Length == 0)
+        {
+            foreach (var sep in TitleSeparators)
+            {
+                int i = title.IndexOf(sep, StringComparison.Ordinal);
+                if (i <= 0 || i + sep.Length >= title.Length) continue;
+                string left = title[..i].Trim(), right = title[(i + sep.Length)..].Trim();
+                if (left.Length == 0 || right.Length == 0 || left.Length > 60) continue;
+                a = left;
+                title = right;
+                break;
+            }
+        }
+        return (title.Length > 0 ? title : "未知曲目", a.Length > 0 ? a : "未知艺术家");
     }
 
     async Task RefreshPropertiesAsync()
@@ -487,14 +518,15 @@ public partial class MainWindow : Window
             if (ver != _propsVersion) return;
             if (p == null) return;
 
-            string title = string.IsNullOrWhiteSpace(p.Title) ? "未知曲目" : p.Title;
-            string artist = !string.IsNullOrWhiteSpace(p.Artist) ? p.Artist : p.AlbumArtist ?? "";
+            var (title, artist) = ResolveTitleArtist(p.Title, p.Artist, p.AlbumArtist, p.Subtitle);
             string app = MediaWatcher.PrettyAppName(s.SourceAppUserModelId);
             string sub = string.IsNullOrWhiteSpace(p.AlbumTitle) ? app : $"{p.AlbumTitle}  ·  {app}";
 
             TitleText.Text = title;
             TitleText.ToolTip = title;
             ArtistText.Text = artist;
+            ArtistText.ToolTip = artist;
+            ArtistIcon.Visibility = Visibility.Visible;
             SubText.Text = sub;
 
             if (p.Thumbnail == null) { SetCover(null, null); return; }
