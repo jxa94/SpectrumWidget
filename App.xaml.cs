@@ -12,7 +12,8 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
-        bool autostart = Array.IndexOf(e.Args, "--autostart") >= 0;
+        // Windows 从 Run 键启动时有时会丢掉参数，所以开机 3 分钟内启动的也算自启
+        bool autostart = Array.IndexOf(e.Args, "--autostart") >= 0 || Environment.TickCount64 < 3 * 60 * 1000;
         _mutex = new Mutex(true, "SpectrumWidget.SingleInstance", out bool created);
         LogLine($"启动 {(autostart ? "（开机自启）" : "（手动）")}，开机后 {TimeSpan.FromMilliseconds(Environment.TickCount64):hh\\:mm\\:ss}{(created ? "" : "，已有实例在运行，退出")}");
         if (!created)
@@ -51,7 +52,11 @@ public partial class App : Application
             var keep = lines.Length >= 200 ? lines[^199..] : lines;
             File.WriteAllLines(path, keep.Append($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {msg}"));
         }
-        catch { }
+        catch (Exception ex)
+        {
+            // 写不进 launch.log 时至少在 error.log 里留下原因
+            Log(new IOException($"launch.log 写入失败：{msg}", ex));
+        }
     }
 
     internal static void Log(Exception? ex)

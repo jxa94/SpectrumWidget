@@ -515,11 +515,19 @@ public partial class MainWindow : Window
             bmp.Freeze();
             SetCover(bmp, hash);
         }
+        catch (Exception ex) when (IsSessionGone(ex))
+        {
+            _media.Pick();
+        }
         catch (Exception ex)
         {
             App.Log(ex);
         }
     }
+
+    /// <summary>播放器刚关掉 / 标签页刚关闭时，读它的会话会抛这些异常，属于正常情况。</summary>
+    static bool IsSessionGone(Exception ex) =>
+        ex is System.IO.FileNotFoundException or COMException or NullReferenceException or ObjectDisposedException;
 
     static async Task<byte[]?> ReadThumbnailAsync(IRandomAccessStreamReference thumb)
     {
@@ -583,6 +591,7 @@ public partial class MainWindow : Window
         try
         {
             var info = s.GetPlaybackInfo();
+            if (info?.Controls == null) { _media.Pick(); return; }
             _playing = info.PlaybackStatus == PlaybackStatus.Playing;
             _rate = info.PlaybackRate ?? 1.0;
             if (_rate <= 0) _rate = 1;
@@ -595,6 +604,7 @@ public partial class MainWindow : Window
             _canSeek = c.IsPlaybackPositionEnabled;
             SeekArea.Cursor = _canSeek ? Cursors.Hand : null;
         }
+        catch (Exception ex) when (IsSessionGone(ex)) { _media.Pick(); }
         catch (Exception ex) { App.Log(ex); }
     }
 
