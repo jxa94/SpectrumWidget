@@ -43,7 +43,10 @@ public sealed class Settings
         try
         {
             Directory.CreateDirectory(Dir);
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+            // 先写临时文件再替换，关机时被中途打断也不会留下半截文件
+            string tmp = FilePath + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+            File.Move(tmp, FilePath, overwrite: true);
         }
         catch { }
     }

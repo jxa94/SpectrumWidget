@@ -763,11 +763,29 @@ public partial class MainWindow : Window
         return k?.GetValue(RunName) is string;
     }
 
+    static string AutostartCommand => $"\"{Environment.ProcessPath}\" --autostart";
+
     static void ToggleAutostart()
     {
         using var k = Registry.CurrentUser.CreateSubKey(RunKey);
         if (k.GetValue(RunName) is string) k.DeleteValue(RunName);
-        else k.SetValue(RunName, $"\"{Environment.ProcessPath}\"");
+        else k.SetValue(RunName, AutostartCommand);
+        App.LogLine($"开机自启 {(k.GetValue(RunName) is string ? "开启" : "关闭")}");
+    }
+
+    /// <summary>自启项还在但程序挪过位置 / 是旧格式时，改成当前路径。</summary>
+    internal static void RefreshAutostartPath()
+    {
+        try
+        {
+            using var k = Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
+            if (k?.GetValue(RunName) is string v && v != AutostartCommand)
+            {
+                k.SetValue(RunName, AutostartCommand);
+                App.LogLine($"更新开机自启路径：{v} → {AutostartCommand}");
+            }
+        }
+        catch (Exception ex) { App.Log(ex); }
     }
 
     // ───────────── Win32 ─────────────
@@ -806,7 +824,12 @@ public partial class MainWindow : Window
         _pollTimer.Stop();
         _visTimer.Stop();
         UnregisterHotKey(new WindowInteropHelper(this).Handle, HotkeyId);
-        if (Left > -5000) { _settings.Left = Left; _settings.Top = Top; }
+        if (Left > -5000)
+        {
+            // 收起状态下存的是展开后卡片该在的位置，不是小圆片的位置
+            var p = _visualCollapsed ? ExpandedPositionFromMini() : new Point(Left, Top);
+            _settings.Left = p.X; _settings.Top = p.Y;
+        }
         _settings.Save();
         _audio.Dispose();
         _tray?.Dispose();
